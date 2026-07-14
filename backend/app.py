@@ -8,6 +8,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, get_jwt_identity
 from sqlalchemy import or_
 
+from .admin_api import register_admin_routes
 from .analytics import build_price_trend
 from .auth import admin_required, create_token, hash_password, protected_user_required, verify_password
 from .database import configure_database, ensure_schema, load_phone_seed_data
@@ -38,7 +39,8 @@ def create_app() -> Flask:
 def register_routes(app: Flask) -> None:
     @app.get("/")
     def index():
-        return send_from_directory(FRONTEND_DIR, "index.html")
+        # show the welcome page first
+        return send_from_directory(FRONTEND_DIR, "welcome.html")
 
     @app.get("/<path:filename>")
     def static_pages(filename: str):
@@ -75,7 +77,7 @@ def register_routes(app: Flask) -> None:
         if not user or not verify_password(password, user.password_hash):
             return jsonify({"message": "Invalid email or password"}), 401
         token = create_token(user)
-        return jsonify({"token": token, "user_id": user.user_id, "name": user.name, "role": user.role})
+        return jsonify({"token": token, "user_id": user.user_id, "name": user.name, "role": user.role, "redirect_to": "/admin.html" if user.role == "admin" else "/index.html"})
 
     @app.get("/phones")
     def phones():
@@ -183,7 +185,7 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/reviews/<int:phone_id>")
     def list_reviews(phone_id: int):
-        reviews = Review.query.filter_by(phone_id=phone_id).order_by(Review.created_at.desc()).all()
+        reviews = Review.query.filter_by(phone_id=phone_id, is_approved=True, is_hidden=False).order_by(Review.created_at.desc()).all()
         return jsonify([review.to_dict() for review in reviews])
 
     @app.get("/user/data")
@@ -241,7 +243,15 @@ def register_routes(app: Flask) -> None:
                 continue
             db.session.add(Phone(**entry))
         db.session.commit()
+        from .models import Brand
+
+        for brand_name in {entry["brand"] for entry in phones}:
+            if not Brand.query.filter_by(name=brand_name).first():
+                db.session.add(Brand(name=brand_name, logo_url=f"https://placehold.co/160x80/0f766e/ffffff?text={brand_name.replace(' ', '+')}"))
+        db.session.commit()
         return jsonify({"message": "JSON data synchronized"})
+
+    register_admin_routes(app)
 
 
 def _current_user() -> User:

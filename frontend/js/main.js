@@ -212,6 +212,51 @@ export function updateNav() {
   const activeClass = (page) => (currentPage === page ? 'active' : '');
   const user = getUser();
   navTargets.forEach((target) => {
+    // Build role-specific nav items
+    const role = user?.role || 'guest';
+    const commonItems = [
+      `<li class="nav-item"><a class="nav-link ${activeClass('index')}" href="/index.html">Home</a></li>`,
+      `<li class="nav-item"><a class="nav-link ${activeClass('search')}" href="/search.html">Search</a></li>`,
+      `<li class="nav-item"><a class="nav-link ${activeClass('recommend')}" href="/recommend.html">Recommend</a></li>`,
+      `<li class="nav-item"><a class="nav-link ${activeClass('trends')}" href="/trends.html">Trends</a></li>`,
+      `<li class="nav-item"><a class="nav-link" href="/trend-graph.html">Price Graph</a></li>`,
+    ];
+
+    // Compare is available to logged-in users and guests (but saving requires login)
+    const compareItem = `<li class="nav-item"><a class="nav-link ${activeClass('compare')}" href="/compare.html">Compare <span class="badge text-bg-light ms-1" data-compare-count>0</span></a></li>`;
+
+    // Role specific additions
+    let roleItems = '';
+    if (role === 'admin') {
+      roleItems = `
+        <li class="nav-item"><a class="nav-link ${activeClass('admin')}" href="/admin.html">Admin Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link" href="/admin.html#user-management">Manage Users</a></li>
+      `;
+    } else if (role === 'user') {
+      roleItems = `
+        <li class="nav-item"><a class="nav-link" href="/compare.html">Saved</a></li>
+        <li class="nav-item"><a class="nav-link" href="/recommend.html">My Recommendations</a></li>
+      `;
+    } else {
+      // guest
+      roleItems = `
+        <li class="nav-item"><a class="nav-link text-muted" href="#">Explore</a></li>
+      `;
+    }
+
+    const userMenu = user
+      ? `<li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">${escapeHtml(user.name || 'User')} <span class="badge bg-secondary ms-1">${escapeHtml(user.role || '')}</span></a>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="/detail.html?phone_id=1">Profile</a></li>
+            <li><a class="dropdown-item" href="/compare.html">Saved Comparisons</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><button class="dropdown-item" type="button" data-action="logout">Logout</button></li>
+          </ul>
+        </li>`
+      : `<li class="nav-item"><a class="nav-link ${activeClass('login')}" href="/login.html">Login</a></li>
+         <li class="nav-item"><a class="btn btn-sm btn-primary ms-lg-2" href="/register.html">Register</a></li>`;
+
     target.innerHTML = `
       <nav class="navbar navbar-expand-lg navbar-light sticky-top">
         <div class="container py-2">
@@ -221,22 +266,10 @@ export function updateNav() {
           </button>
           <div class="collapse navbar-collapse" id="mainNav">
             <ul class="navbar-nav ms-auto align-items-lg-center gap-lg-1">
-              <li class="nav-item"><a class="nav-link ${activeClass('index')}" href="/index.html">Home</a></li>
-              <li class="nav-item"><a class="nav-link ${activeClass('search')}" href="/search.html">Search</a></li>
-              <li class="nav-item"><a class="nav-link ${activeClass('recommend')}" href="/recommend.html">Recommend</a></li>
-              <li class="nav-item"><a class="nav-link ${activeClass('compare')}" href="/compare.html">Compare <span class="badge text-bg-light ms-1" data-compare-count>0</span></a></li>
-              <li class="nav-item"><a class="nav-link ${activeClass('trends')}" href="/trends.html">Trends</a></li>
-              <li class="nav-item"><a class="nav-link ${activeClass('admin')}" href="/admin.html">Admin</a></li>
-              ${user ? `
-                <li class="nav-item dropdown">
-                  <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">${escapeHtml(user.name || 'User')}</a>
-                  <ul class="dropdown-menu dropdown-menu-end">
-                    <li><a class="dropdown-item" href="/detail.html?phone_id=1">Profile data</a></li>
-                    <li><button class="dropdown-item" type="button" data-action="logout">Logout</button></li>
-                  </ul>
-                </li>` : `
-                <li class="nav-item"><a class="nav-link ${activeClass('login')}" href="/login.html">Login</a></li>
-                <li class="nav-item"><a class="btn btn-sm btn-primary ms-lg-2" href="/register.html">Register</a></li>`}
+              ${commonItems.join('')}
+              ${compareItem}
+              ${roleItems}
+              ${userMenu}
             </ul>
           </div>
         </div>
@@ -314,7 +347,7 @@ export function bindGlobalActions() {
       event.preventDefault();
       clearToken();
       toast('Logged out successfully', 'success');
-      window.location.href = '/index.html';
+      window.location.href = data.redirect_to || (data.role === 'admin' ? '/admin.html' : '/index.html');
     }
   });
 }
@@ -516,8 +549,19 @@ async function initTrendsPage() {
   select.innerHTML = phones.map((phone) => `<option value="${phone.phone_id}">${escapeHtml(phone.name)}</option>`).join('');
 
   const renderTrend = async () => {
+    console.debug('initTrendsPage: renderTrend start', { selectValue: select?.value });
     const phoneId = select.value;
-    const data = await apiRequest(`/trend?phone_id=${phoneId}`);
+    let data;
+    try {
+      data = await apiRequest(`/trend?phone_id=${phoneId}`);
+      console.debug('trend data loaded', data);
+    } catch (err) {
+      console.error('Failed to load trend data', err);
+      const shell = document.querySelector('.chart-shell');
+      if (shell) shell.innerHTML = `<div class="p-4 text-danger">Failed to load trend data. Check console for details.</div>`;
+      toast('Could not load trend data. See console.', 'error');
+      return;
+    }
     summary.innerHTML = `
       <div class="col-md-4"><div class="page-card p-3"><div class="text-muted">Current Price</div><div class="h4 fw-bold mb-0">${formatMoney(data.current_price)}</div></div></div>
       <div class="col-md-4"><div class="page-card p-3"><div class="text-muted">Lowest Recorded</div><div class="h4 fw-bold mb-0">${formatMoney(data.lowest_recorded)}</div></div></div>
@@ -525,25 +569,122 @@ async function initTrendsPage() {
     `;
     insight.textContent = data.insight;
 
+    // populate analysis panel if present
+    const analysis = document.querySelector('[data-trend-analysis]');
+    if (analysis) {
+      // compute quick stats
+      const hist = data.historical_prices || [];
+      const pred = data.predicted_prices || [];
+      const latest = hist.length ? hist[hist.length - 1] : data.current_price;
+      const predicted = pred.length ? pred[pred.length - 1] : data.predicted_in_6_months;
+      const minVal = hist.length ? Math.min(...hist) : data.lowest_recorded;
+      const maxVal = hist.length ? Math.max(...hist) : latest;
+      const volatility = (maxVal - minVal).toFixed(2);
+      const pctChange = latest ? (((predicted - latest) / latest) * 100).toFixed(1) : '0.0';
+      const direction = Number(predicted) > Number(latest) ? 'Rising' : 'Softening';
+      const recommendation = Number(pctChange) >= 5 ? 'Consider waiting for price to soften' : Number(pctChange) <= -5 ? 'Good time to buy' : 'Hold — small change expected';
+      analysis.innerHTML = `
+        <div class="label">Quick Analysis</div>
+        <div><span class="small text-muted">Trend</span> <div class="value">${direction} (${pctChange}% over 6m)</div></div>
+        <div class="mt-2"><span class="small text-muted">Volatility</span> <div class="value">$${Number(volatility).toLocaleString()}</div></div>
+        <div class="mt-2"><span class="small text-muted">Recommendation</span><div class="text-muted">${escapeHtml(recommendation)}</div></div>
+      `;
+    }
+
     const canvas = document.getElementById('trendChart');
+    if (typeof Chart === 'undefined') {
+      console.error('Chart.js is not available on the page.');
+      const shell = document.querySelector('.chart-shell');
+      if (shell) shell.innerHTML = `<div class="p-4 text-danger">Chart.js not loaded — chart cannot be rendered.</div>`;
+      toast('Chart library missing. See console.', 'error');
+      return;
+    }
+
+    if (!canvas) {
+      console.error('Trend canvas element not found.');
+      const shell = document.querySelector('.chart-shell');
+      if (shell) shell.innerHTML = `<div class="p-4 text-danger">Chart canvas missing in DOM.</div>`;
+      return;
+    }
+
     if (canvas && typeof Chart !== 'undefined') {
+      // ensure canvas fills the parent chart shell
+      try {
+        const parentShell = canvas.closest('.chart-shell');
+        if (parentShell) {
+          parentShell.style.minHeight = parentShell.style.minHeight || '280px';
+        }
+        canvas.style.width = '100%';
+        canvas.style.height = canvas.style.height || '100%';
+        canvas.style.maxHeight = '520px';
+      } catch (e) {}
       const labels = [...data.historical_labels, ...data.predicted_labels];
       const historySeries = [...data.historical_prices, ...Array(data.predicted_prices.length).fill(null)];
       const futureSeries = [...Array(data.historical_prices.length).fill(null), ...data.predicted_prices];
-      if (window.trendChart) {
-        window.trendChart.destroy();
+      if (window.__trendChart && typeof window.__trendChart.destroy === 'function') {
+        try { window.__trendChart.destroy(); } catch (e) { console.warn('Error destroying trendChart', e); }
+        window.__trendChart = null;
       }
-      window.trendChart = new Chart(canvas, {
+      // compute fixed y-axis bounds from available numeric series with a small padding
+      const allValues = [...data.historical_prices, ...data.predicted_prices].filter((v) => v != null && !Number.isNaN(Number(v)));
+      let yMin = 0;
+      let yMax = 100;
+      if (allValues.length) {
+        const minVal = Math.min(...allValues);
+        const maxVal = Math.max(...allValues);
+        const pad = Math.max(5, (maxVal - minVal) * 0.1);
+        yMin = Math.max(0, Math.floor(minVal - pad));
+        yMax = Math.ceil(maxVal + pad);
+      }
+      try {
+        window.trendChart = new Chart(canvas, {
         type: 'line',
         data: {
           labels,
           datasets: [
-            { label: 'Historical Prices', data: historySeries, borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.12)', tension: 0.35 },
-            { label: 'Predicted Prices', data: futureSeries, borderColor: '#f97316', borderDash: [8, 6], tension: 0.35 },
+            { label: 'Historical Prices', data: historySeries, borderColor: '#0f766e', backgroundColor: function(context){ const c = context.chart.canvas; const ctx = context.chart.ctx; const rect = c.getBoundingClientRect(); const g = ctx.createLinearGradient(0,0,0,rect.height||360); g.addColorStop(0, 'rgba(15,118,110,0.16)'); g.addColorStop(1, 'rgba(15,118,110,0.02)'); return g; }, tension: 0.35, pointRadius: 3, borderWidth: 2, fill: true, spanGaps: true },
+            { label: 'Predicted Prices', data: futureSeries, borderColor: '#f97316', backgroundColor: function(context){ const c = context.chart.canvas; const ctx = context.chart.ctx; const rect = c.getBoundingClientRect(); const g = ctx.createLinearGradient(0,0,0,rect.height||360); g.addColorStop(0, 'rgba(249,115,22,0.14)'); g.addColorStop(1, 'rgba(249,115,22,0.03)'); return g; }, borderDash: [8, 6], tension: 0.35, pointRadius: 3, borderWidth: 2, fill: true, spanGaps: true },
           ],
         },
-        options: { responsive: true, maintainAspectRatio: false },
-      });
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: { mode: 'index', intersect: false }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { autoSkip: true, maxTicksLimit: 8 },
+            },
+            y: {
+              min: yMin,
+              max: yMax,
+              grid: { color: '#eee' },
+              ticks: { callback: (value) => formatMoney(value) },
+            },
+          },
+        },
+        });
+        console.debug('initTrendsPage: chart created', window.__trendChart);
+      } catch (chartErr) {
+        console.error('Chart creation failed', chartErr);
+        const shell = document.querySelector('.chart-shell');
+        if (shell) {
+          shell.insertAdjacentHTML('beforeend', `<div class="p-3 text-danger">Chart creation error — see console.</div>`);
+        }
+        toast('Chart rendering failed. See console.', 'error');
+      }
+    }
+
+    // If chart wasn't created, show raw data for debugging
+    if (!window.__trendChart) {
+      const shell = document.querySelector('.chart-shell');
+      if (shell) {
+        const dump = `Historical: ${escapeHtml(JSON.stringify(data.historical_prices || []))} \nPredicted: ${escapeHtml(JSON.stringify(data.predicted_prices || []))}`;
+        shell.insertAdjacentHTML('beforeend', `<pre class="p-3 small text-muted">${dump}</pre>`);
+      }
     }
   };
 
@@ -614,6 +755,12 @@ async function initLoginPage() {
   if (!form) {
     return;
   }
+  const guestButton = document.querySelector('[data-guest-view]');
+  guestButton?.addEventListener('click', () => {
+    clearToken();
+    toast('Browsing as guest', 'success');
+    window.location.href = '/index.html';
+  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const email = form.querySelector('[name="email"]').value.trim();
@@ -637,6 +784,12 @@ async function initRegisterPage() {
   if (!form) {
     return;
   }
+  const guestButton = document.querySelector('[data-guest-view]');
+  guestButton?.addEventListener('click', () => {
+    clearToken();
+    toast('Browsing as guest', 'success');
+    window.location.href = '/index.html';
+  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const name = form.querySelector('[name="name"]').value.trim();
@@ -769,22 +922,57 @@ async function renderDetailTrend(phoneId) {
   if (!canvas || typeof Chart === 'undefined') {
     return;
   }
+  // Constrain the chart container to prevent uncontrolled growth
+  try {
+    const parent = canvas.parentElement;
+    if (parent) {
+      parent.style.height = parent.style.height || '220px';
+      parent.style.maxHeight = '360px';
+    }
+    canvas.style.height = canvas.style.height || '180px';
+    canvas.style.maxHeight = '360px';
+  } catch (e) {
+    // ignore styling errors
+  }
   const labels = [...response.historical_labels, ...response.predicted_labels];
   const historical = [...response.historical_prices, ...Array(response.predicted_prices.length).fill(null)];
   const future = [...Array(response.historical_prices.length).fill(null), ...response.predicted_prices];
-  if (window.detailChart) {
-    window.detailChart.destroy();
+  if (window.__detailChart && typeof window.__detailChart.destroy === 'function') {
+    try { window.__detailChart.destroy(); } catch (e) { console.warn('Error destroying detailChart', e); }
+    window.__detailChart = null;
   }
-  window.detailChart = new Chart(canvas, {
+  // fixed y-axis bounds for detail chart with padding
+  const detailAll = [...response.historical_prices, ...response.predicted_prices].filter((v) => v != null && !Number.isNaN(Number(v)));
+  let dMin = 0;
+  let dMax = 100;
+  if (detailAll.length) {
+    const minV = Math.min(...detailAll);
+    const maxV = Math.max(...detailAll);
+    const pad = Math.max(5, (maxV - minV) * 0.1);
+    dMin = Math.max(0, Math.floor(minV - pad));
+    dMax = Math.ceil(maxV + pad);
+  }
+  if (window.__detailChart && typeof window.__detailChart.destroy === 'function') {
+    try { window.__detailChart.destroy(); } catch (e) { console.warn('Error destroying detailChart', e); }
+    window.__detailChart = null;
+  }
+  window.__detailChart = new Chart(canvas, {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Historical', data: historical, borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.12)', tension: 0.35 },
-        { label: 'Predicted', data: future, borderColor: '#f97316', borderDash: [8, 6], tension: 0.35 },
+        { label: 'Historical', data: historical, borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.12)', tension: 0.35, pointRadius: 3, borderWidth: 2, spanGaps: true },
+        { label: 'Predicted', data: future, borderColor: '#f97316', borderDash: [8, 6], tension: 0.35, pointRadius: 3, borderWidth: 2, spanGaps: true },
       ],
     },
-    options: { responsive: true, maintainAspectRatio: false },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 8 } },
+        y: { min: dMin, max: dMax, grid: { color: '#eee' }, ticks: { callback: (value) => formatMoney(value) } },
+      },
+    },
   });
 }
 
@@ -912,8 +1100,6 @@ export async function initCurrentPage() {
     await initRegisterPage();
   } else if (page === 'detail') {
     await initDetailPage();
-  } else if (page === 'admin') {
-    await initAdminPage();
   }
 }
 
